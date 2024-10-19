@@ -1,0 +1,1 @@
+necro_6502.exe .\SquareMove.asm SquareMove.bin
