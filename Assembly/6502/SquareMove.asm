@@ -12,22 +12,22 @@ loop:
     LDA $00
     CMP #$FF ; Speed
     BNE increment_counter
+    ; if counter < FF, increment it
 
     LDX $4000
     TXA
     AND #%00001111 ; enable only the input
     BEQ change_color ; if there's no input go to next
 
-     ; if counter < FF, increment it
+    JMP handle_direction ; check for direction input
     
-    JMP handle_direction ; if counter is FF, check for direction input
 change_color:
     LDA #$01
     STA $0200, Y
     JMP next
 
 increment_counter:
-    INC $00 ; Incrementa l'iteratore
+    INC $00 
     JMP next
 
 handle_direction:
@@ -70,21 +70,39 @@ down:
 left:
     JSR clear_square_and_reset_counter
     TYA
-    SEC ; Set carry = 1
-    SBC #$01
+    AND #%00001111   ; REMEMBER!!! Lowbyte for column, Heightbyte for line
+    CMP #$00         
+    BEQ at_left_edge ; if Y < 00 -> at left Edge 
+    DEY
+    JSR move_square
+    JMP next
+    
+at_left_edge:
+    TYA
+    AND #%11110000   ; Get current line
+    ORA #%00001111   ; Move to $0F  (X0000 become X1111)
     TAY
     JSR move_square
     JMP next
 
+at_right_edge:
+    TYA
+    AND #%11110000   ; Same for Left
+    ORA #%00000000   
+    TAY
+    JSR move_square
+    JMP next
+    
 right:
     JSR clear_square_and_reset_counter
     TYA
-    CLC ; Clear carry
-    ADC #$01
-    TAY
+    AND #%00001111   
+    CMP #$0F         
+    BEQ at_right_edge
+    INY
     JSR move_square
     JMP next
-
+    
 move_square:
     LDA #$03
     STA $0200, Y
