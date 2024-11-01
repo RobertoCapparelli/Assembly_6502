@@ -15,13 +15,13 @@ main:
 
     JSR load_palette ; Carica la palette delle sprite
 
-    LDA #$80        ; Posizione Y della sprite
+    LDA #$00        ; Posizione Y della sprite
     STA $0200       ; OAM byte 0
-    LDA #$01        ; Indice del tile (secondo tile definito in sprite_pattern)
+    LDA #$02        ; Indice del tile (secondo tile definito in sprite_pattern)
     STA $0201       ; OAM byte 1
     LDA #$01        ; Attributi della sprite
     STA $0202       ; OAM byte 2
-    LDA #$40        ; Posizione X della sprite
+    LDA #$00        ; Posizione X della sprite
     STA $0203       ; OAM byte 3
 
     LDA #$08        ; Abilita rendering sprite e sfondo
@@ -52,6 +52,14 @@ loop:
     JMP loop        ; Ciclo infinito
 
 nmi:
+    TAX
+    LDA #$00        ; Carica l'indirizzo di partenza (basso byte) per OAM DMA
+    STA $2003       ; Imposta l'indirizzo di inizio OAM
+
+    LDA #$02        ; Imposta la pagina di memoria ($0200) da copiare nella OAM
+    STA $4014       ; Attiva il DMA per caricare le informazioni delle sprite
+    TXA
+
     RTI
 
 irq:
