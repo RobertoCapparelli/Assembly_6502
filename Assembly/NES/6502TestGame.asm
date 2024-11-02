@@ -1,31 +1,73 @@
-.db "NES", $1A, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+.DB "NES", $1A, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     .ORG $8000      ; Inizio della PRG-ROM
 
+
+;PPU
+.define PPU_CTRL   $2000
+.define PPU_MASK   $2001
+.define PPU_STATUS $2002
+.define OAM_ADDR   $2003
+.define OAM_DATA   $2004
+.define PPU_SCROLL $2005
+.define PPU_ADDR   $2006
+.define PPU_DATA   $2007
+.define OAM_DMA    $4014
+reset:
+	sei			; disable IRQs
+	cld			; disable decimal mode
+;	ldx #$40
+;	stx $4017	; disable APU frame IRQ
+	ldx #$FF
+	txs			; set up stack
+	inx			; now X = 0
+	lda PPU_STATUS
+	ldx #%00000000
+	stx	PPU_CTRL	; disable NMI
+	ldx #%00000000
+	stx PPU_MASK	; disable rendering
+;	stx $4010	; disable DMC IRQs
+
+	lda PPU_STATUS	; PPU warm up
+vblankwait1:	; First wait for vblank to make sure PPU is ready
+	bit PPU_STATUS	; PPU status register
+	bpl vblankwait1
+
+vblankwait2:
+	bit PPU_STATUS
+	bpl vblankwait2
+
+	lda #$00
+	ldx #$00
+clear_memory:
+	sta $0000, X
+	sta $0100, X
+	sta $0200, X
+	sta $0300, X
+	sta $0400, X
+	sta $0500, X
+	sta $0600, X
+	sta $0700, X
+	inx
+	cpx #$00
+	BNE clear_memory
+    
 main:
-    SEI
-    CLD
-    LDX #$FF
-    TXS
-    INX
-
-    ; Inizializzazione della PPU
-    LDA #$00
-    STA $2000       ; PPUCTRL: disabilita rendering
-    STA $2001       ; PPUMASK: disabilita rendering
-
+    LDA #%10001000
+    STA PPU_CTRL
+    LDA #%00011010
+    STA PPU_MASK
+    
     JSR load_palette ; Carica la palette delle sprite
 
-    LDA #$00        ; Posizione Y della sprite
-    STA $0200       ; OAM byte 0
-    LDA #$02        ; Indice del tile (secondo tile definito in sprite_pattern)
-    STA $0201       ; OAM byte 1
-    LDA #$01        ; Attributi della sprite
-    STA $0202       ; OAM byte 2
-    LDA #$00        ; Posizione X della sprite
-    STA $0203       ; OAM byte 3
 
-    LDA #$08        ; Abilita rendering sprite e sfondo
-    STA $2001
+     ; Writing to nametable
+    LDA #$24
+    STA PPU_ADDR
+    LDA #$00
+    STA PPU_ADDR
+    LDA #$01
+    STA PPU_DATA
+    
 
     JMP loop
 
@@ -53,13 +95,68 @@ loop:
 
 nmi:
     TAX
-    LDA #$00        ; Carica l'indirizzo di partenza (basso byte) per OAM DMA
-    STA $2003       ; Imposta l'indirizzo di inizio OAM
+    lda #$00
+	sta OAM_ADDR
+	lda #$02
+	sta OAM_DMA
 
-    LDA #$02        ; Imposta la pagina di memoria ($0200) da copiare nella OAM
-    STA $4014       ; Attiva il DMA per caricare le informazioni delle sprite
+    lda #$08      ; Top of the screen
+	clc
+	;adc char_vel_y
+  	sta $0200     ; Sprite 1 Y Position
+  	lda #$08
+	clc
+	;adc char_vel_y
+  	sta $0204     ; Sprite 2 Y Position
+  	lda #$10
+	clc
+	;adc char_vel_y
+  	sta $0208     ; Sprite 3 Y Position
+  	lda #$10
+	clc
+	;adc char_vel_y
+  	sta $020C     ; Sprite 4 Y Position
+
+    lda #$3A      ; Top Left section of Mario standing still
+  	sta $0201     ; Sprite 1 Tile Number
+  	lda #$37      ; Top Right section of Mario standing still
+ 	sta $0205     ; Sprite 2 Tile Number
+  	lda #$4F      ; Bottom Left section of Mario standing still
+  	sta $0209     ; Sprite 3 Tile Number
+  	lda #$4F      ; Bottom Right section of Mario standing still
+  	sta $020D     ; Sprite 4 Tile Number
+  	lda #$00		; No attributes, using first sprite palette which is number 0
+  	sta $0202     ; Sprite 1 Attributes
+  	sta $0206     ; Sprite 2 Attributes
+  	sta $020A     ; Sprite 3 Attributes
+  	lda #$40      ; Flip horizontal attribute
+  	sta $020E     ; Sprite 4 Attributes
+
+      	lda #$08      ; Left of the screen.
+	clc
+	;adc char_vel_x
+  	sta $0203     ; Sprite 1 X Position
+  	lda #$10
+	clc
+  	;adc char_vel_x
+	sta $0207     ; Sprite 2 X Position
+  	lda #$08
+	clc
+  	;adc char_vel_x
+	sta $020B     ; Sprite 3 X Position
+ 	lda #$10
+	clc
+  	;adc char_vel_x
+	sta $020F     ; Sprite 4 X Position
+
+    ; Scrolling
+    LDA $01
+    ADC #$01
+    STA $01
+    STA PPU_SCROLL ; X
+    LDA #$00
+    STA PPU_SCROLL ; Y
     TXA
-
     RTI
 
 irq:
@@ -70,54 +167,5 @@ irq:
     .DW main        ; Vettore per il reset
     .DW irq         ; Vettore per IRQ/BRK
 
-    ; Inserisci i dati grafici nella CHR-ROM
-    .ORG $0000
-sprite_pattern:
-    .DB %00000000   ; Riga 1
-    .DB %00000000
-    .DB %00000000   ; Riga 2
-    .DB %00000000
-    .DB %00000000   ; Riga 3
-    .DB %00000000
-    .DB %00000000   ; Riga 4
-    .DB %00000000
-    .DB %00000000   ; Riga 5
-    .DB %00000000
-    .DB %00000000   ; Riga 6
-    .DB %00000000
-    .DB %00000000   ; Riga 7
-    .DB %00000000
-    .DB %00000000   ; Riga 8
-    .DB %00000000
-    
-    sprite_pattern2:
-   ; Riga 1 (tutta accesa, parte superiore del bordo)
-    .DB %11111111   ; Bit plane 1
-    .DB %00000000   ; Bit plane 2
-    
-    ; Riga 2 (bordi ai lati)
-    .DB %10000001   ; Bit plane 1
-    .DB %00000001   ; Bit plane 2
-    
-    ; Riga 3 (bordi ai lati)
-    .DB %10000001   ; Bit plane 1
-    .DB %00000001   ; Bit plane 2
-    
-    ; Riga 4 (bordi ai lati)
-    .DB %10000001   ; Bit plane 1
-    .DB %00000001   ; Bit plane 2
-    
-    .DB %10000001   ; Bit plane 1
-    .DB %00000001   ; Bit plane 2
-    
-    ; Riga 6 (bordi ai lati)
-    .DB %10000001   ; Bit plane 1
-    .DB %00000001  ; Bit plane 2
-    
-    ; Riga 7 (bordi ai lati)
-    .DB %10000001   ; Bit plane 1
-    .DB %00000001  ; Bit plane 2
-    
-    ; Riga 8 (bordo inferiore)
-    .DB %11111111   ; Bit plane 1
-    .DB %00000000  ; Bit plane 2
+.INCBIN "1.bin"
+.INCBIN "2.bin"
