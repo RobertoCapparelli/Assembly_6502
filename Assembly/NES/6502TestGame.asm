@@ -4,9 +4,19 @@
 ;Variables
 .define char_vel_x $0001
 .define char_vel_y $0002
+.define char_speed $0003
 .define posY $0023
 .define IsMoved $0021
+.define isMovedTimer $0028
 .define jumpCounter $0024
+.define jumpTriggered $0025 
+.define gravityTimer $0027   ; Variabile per il timer della gravità
+.define screenX $0030
+.define screenLimit $0029
+.define animCounter $0031
+
+.define sprite2_posX $0040  ; Posizione X del nuovo sprite
+.define sprite2_posY $0041
 
 ;PPU
 .define PPU_CTRL   $2000
@@ -39,6 +49,8 @@ reset:
 	STX PPU_MASK	; disable rendering
 ;	stx $4010	; disable DMC IRQs
 
+
+
 	LDA PPU_STATUS	; PPU warm up
 vblankwait1:	; First wait for vblank to make sure PPU is ready
 	BIT PPU_STATUS	; PPU status register
@@ -52,8 +64,10 @@ vblankwait2:
 	LDX #$00
 	STA char_vel_x
 	STA char_vel_y
+	STA jumpCounter
 	STA posY
 	STA buttons_addr
+	STA jumpTriggered
 	STA CONTROLLER1
 	
 clear_memory:
@@ -86,6 +100,24 @@ main:
     LDA #$01
     STA PPU_DATA
     
+	LDA #$10
+	STA posY
+
+	LDA #$02
+	STA char_speed
+	
+	LDA #$F0         ; Posizione iniziale X (vicino al bordo destro)
+    STA sprite2_posX
+    LDA #$40         ; Posizione iniziale Y
+    STA sprite2_posY
+
+	LDA #$00
+	STA screenX
+	STA char_vel_x
+	
+	; Imposta il limite inizia	le per il movimento dello sprite
+	LDA #$C0      ; Valore scelto per indicare la posizione limite
+	STA screenLimit
 
     JMP loop
 
@@ -110,41 +142,45 @@ load_palette:
     
 loop:
 	JSR ApplyGravity
-	JSR ReadButton  
+	JSR ReadButton 
     JMP loop        ; Ciclo infinito
+
+        ; Ritorna alla routine principale
 	
 ApplyGravity:
-	LDA jumpCounter
-    BEQ CheckGround       ; Se jumpCounter è zero, procedi con la gravità
-	JMP next
+	LDA gravityTimer         ; Carica il valore del timer
+    CMP #$02                 ; Controlla se il timer ha raggiunto il valore desiderato (es. 10 per applicare la gravità ogni 10 NMI)
+    BNE next          ; Se non ha raggiunto il valore, salta l'applicazione della gravità
+
+	LDA #$00                 ; Resetta il timer
+    STA gravityTimer
+	
+    LDA jumpTriggered
+    CMP #$01       ; Se jumpTriggered è zero, procedi con la gravità
+	BEQ next
+		
 CheckGround:
     LDA posY
-    CMP #$B0               ; Soglia per il terreno (adatta secondo le necessità)
-    BCS GravityDisabled     ; Se Y >= $F0, disabilita la gravità (sprite è a terra)
+    CMP #$B0              ; Soglia per il terreno
+    BCS GravityDisabled   ; Se Y >= soglia, ferma la gravità
 
-	LDA IsMoved             ; Controlla se lo sprite si è già mosso
-    CMP #$01
-    BEQ next     ; Salta l'aggiornamento se `IsMoved` è già impostato
-	
-    ; Applicazione della gravità
+    ; Applica la gravità normalmente
     LDA char_vel_y
-    CLC
-    ADC #$01                ; Incrementa la velocità Y per simulare la gravità
-    STA char_vel_y          ; Salva la nuova velocità Y
-	
-	 ; Aggiungi la velocità Y a posY
+    CLC ;Flag 0
+    ADC #$01              ; Incrementa la velocità Y per simulare la gravità
+    STA char_vel_y
     LDA posY
     CLC
-    ADC char_vel_y
+    ADC char_vel_y        ; Aggiorna posY
     STA posY
-	
-	LDA #$01
-    STA IsMoved 
-	JMP next    
-	            ; Salta alla fine per evitare l'azzeramento di char_vel_y
-GravityDisabled: 
-	LDA #$00
-	STA char_vel_y
+    RTS
+
+GravityDisabled:
+    LDA #$00
+    STA char_vel_y        ; Ferma la gravità
+	LDA #$B0
+	STA posY
+    RTS
 	
 next:
 	RTS
@@ -185,64 +221,121 @@ next:
 	
 	LDA IsMoved             ; Controlla se lo sprite si è già mosso
     CMP #$01
-    BEQ NoButtonPressed     ; Salta l'aggiornamento se `IsMoved` è già impostato
+    BEQ nextJump     ; Salta l'aggiornamento se `IsMoved` è già impostato
 
 ; RIGHT
     LDA buttons_addr
     AND #%00000001          ; Controlla se il pulsante "Right" è premuto (bit 0)
-    BEQ SkipRight	
-    INC char_vel_x 
-	LDA #$01
-    STA IsMoved         ; Imposta a 1 per evitare incremento continuo
+    BEQ SkipRight
+
+	LDA char_vel_x 
+    CMP screenLimit         ; Controlla se char_vel_x ha raggiunto il limite
+    BCC MoveSpriteRight     ; Se char_vel_x < screenLimit, muovi lo sprite
+
+    ; Se char_vel_x >= screenLimit, aggiorna solo lo scroll e non muovere lo sprite
+    INC screenX
+    JMP SkipRight           ; Salta l'incremento di char_vel_x
+
+MoveSpriteRight:
+    ; Muovi lo sprite se non ha raggiunto il limite
+    INC char_vel_x
+    INC char_vel_x          ; Incrementa la velocità per spostarlo più velocemente (adatta secondo necessità)
+
 SkipRight:
+    LDA #$01
+    STA IsMoved
+	             ; Imposta IsMoved per evitare incrementi continui
 
 ; LEFT
     LDA buttons_addr
     AND #%00000010          ; Controlla se il pulsante "Left" è premuto (bit 1)
     BEQ SkipLeft
-    DEC char_vel_x  
+    DEC char_vel_x 
+	DEC char_vel_x  
 	LDA #$01
     STA IsMoved        ; Imposta a -1 per evitare decremento continuo
 SkipLeft:
 
 
-;; UP
+; Se il tasto "UP" è premuto e il salto non è già stato attivato
 	LDA buttons_addr
-	AND #%00001000         ; Controlla se il pulsante "Up" è premuto (bit 3)
-	BEQ SkipUp
-	LDA #$10               ; Imposta il contatore di salto a 3 cicli
-	STA jumpCounter
-	LDA #$F0               ; Valore negativo per un impulso verso l'alto
-	STA char_vel_y         ; Imposta la velocità verticale per il salto
-	
-	; Modifica immediata di posY
-	LDA posY
-	CLC                    ; Clear Carry per l'addizione
-	ADC char_vel_y         ; Aggiungi la velocità Y negativa per simulare il salto
-	STA posY               ; Aggiorna posY
-	
-	LDA #$01
-	STA IsMoved            ; Imposta IsMoved per evitare ulteriori movimenti nello stesso ciclo
+    AND #%00001000         ; Controlla se il pulsante "Up" è premuto (bit 3)
+    BEQ ResetJumpFlag      ; Se il tasto non è premuto, resetta il flag e termina
 
-SkipUp:
+    LDA jumpTriggered
+    CMP #$01               ; Controlla se il salto è già attivato
+    BEQ nextJump    ; Se jumpTriggered è 1 (salto già attivato), salta l'inizio del ciclo
+
+    ; Inizio del salto
+    LDA #$F5               ; Valore negativo per l'impulso verso l'alto
+    STA char_vel_y
+    LDA #$01
+    STA jumpTriggered      ; Imposta il flag per indicare che il salto è stato attivato
+	
+	LDA posY               ; Carica posY nell'accumulatore
+    CLC                    ; Clear Carry per preparare l'addizione
+    ADC char_vel_y         ; Somma il valore negativo di char_vel_y a posY
+    STA posY  
+	
+    LDA #$01
+    STA IsMoved            ; Imposta IsMoved per evitare ulteriori movimenti nello stesso ciclo
+
+    ;LDA #$F0               ; Continua a decrementare la velocità Y per il salto
+    ;STA char_vel_y           ; Salva il risultato in posY 
+    RTS
+
+ResetJumpFlag:
+    ; Se il tasto "UP" non è premuto, resetta il flag
+    LDA #$00
+    STA jumpTriggered
     
 NoButtonPressed:
-
-    RTS                     ; Ritorna al loop principale
-	
+    LDA #$00
+    STA jumpTriggered
+nextJump:
+    RTS                    ; Ritorna al loop principale
 nmi:
 	TAX
 	
+
+	INC gravityTimer
+	INC isMovedTimer
+	 ; Controlla se il timer ha raggiunto la soglia per resettare `IsMoved`
+    LDA isMovedTimer
+    CMP #$02                ; Adatta questo valore in base alla frequenza desiderata
+    BNE SkipResetIsMoved
+
+    LDA #$00                ; Resetta `IsMoved` e il timer
+    STA IsMoved
+    STA isMovedTimer
+
+SkipResetIsMoved:
+
+  ; Aggiorna lo scroll orizzontale solo se necessario
+    LDA screenX
+    CMP #$00
+    BEQ SkipScrollUpdate    ; Salta se screenX non è cambiato
+    STA PPU_SCROLL
+    LDA #$00
+    STA PPU_SCROLL
+
+SkipScrollUpdate:
+
     nmi_sprites:
 	lda #$00
 	sta OAM_ADDR
 	lda #$02
 	STA OAM_DMA
+
+ ;   ; Se jumpCounter è maggiore di zero, applica l'impulso verso l'alto e decrementa
+ ;   LDA jumpCounter
+ ;   BEQ SkipDecrement  ; Se jumpCounter è zero, salta l'impulso
+ ;   DEC jumpCounter    ; Decrementa jumpCounter
+ ;   LDA char_vel_y
+ ;   CLC
+ ;   ADC #$01           ; Riduce progressivamente l'impulso
+ ;   STA char_vel_y
 	
-    LDA jumpCounter
-    BEQ SkipDecrement  ; Se jumpCounter è uguale a zero, salta il decremento
-    DEC jumpCounter    ; Decrementa jumpCounter se è maggiore di zero
-SkipDecrement:
 	
 ;; Draw character
 
@@ -294,12 +387,23 @@ SkipDecrement:
   	sta $020A     ; Sprite 3 Attributes
   	lda #$40      ; Flip horizontal attribute
   	sta $020E     ; Sprite 4 Attributes
-
-  	
 	
-	; Resetta IsMoved alla fine del VBLANK
-    LDA #$00
-    STA IsMoved
+    LDA sprite2_posX
+    SEC               ; Imposta il carry per la sottrazione
+    SBC #$01          ; Sottrai 1 per muovere a sinistra
+    STA sprite2_posX
+          
+	 ; Disegna il nuovo sprite nella posizione aggiornata
+    LDA sprite2_posY
+    STA $0210         ; Sprite 5 Y Position
+    LDA sprite2_posX
+    STA $0213         ; Sprite 5 X Position
+
+    LDA #$AA          ; Tile number per il nuovo sprite (es. un tile specifico)
+    STA $0211         ; Sprite 5 Tile Number
+    LDA #$00          ; No attributi speciali (es. senza flip)
+    STA $0212         ; Sprite 5 Attributes
+
 	TXA
     RTI
 
